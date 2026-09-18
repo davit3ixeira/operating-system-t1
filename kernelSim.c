@@ -30,6 +30,7 @@ int main()
         close(fd6[0]);
         close(fd6[1]);
         printf("Child 1: PID = %d, PPID = %d\n", getpid(), getppid());
+        execl("./a1", "a1", NULL);
         exit(0);
     }
     close(fd1[1]);
@@ -47,6 +48,7 @@ int main()
         close(fd6[0]);
         close(fd6[1]);
         printf("Child 2: PID = %d, PPID = %d\n", getpid(), getppid());
+        execl("./a2", "a2", NULL);
         exit(0);
     }
     close(fd2[1]);
@@ -63,6 +65,7 @@ int main()
         close(fd6[0]);
         close(fd6[1]);
         printf("Child 3: PID = %d, PPID = %d\n", getpid(), getppid());
+        execl("./a3", "a3", NULL);
         exit(0);
     }
     close(fd3[1]);
@@ -78,6 +81,7 @@ int main()
         close(fd6[0]);
         close(fd6[1]);
         printf("Child 4: PID = %d, PPID = %d\n", getpid(), getppid());
+        execl("./a4", "a4", NULL);
         exit(0);
     }
     close(fd4[1]);
@@ -92,6 +96,7 @@ int main()
         close(fd6[0]);
         close(fd6[1]);
         printf("Child 5: PID = %d, PPID = %d\n", getpid(), getppid());
+        execl("./a5", "a5", NULL);
         exit(0);
     }
     close(fd5[1]);
@@ -105,11 +110,20 @@ int main()
         close(fd5[0]);
         close(fd6[0]);
         printf("Child 6: PID = %d, PPID = %d\n", getpid(), getppid());
+        execl("./a6", "a6", NULL);
         exit(0);
     }
     close(fd6[1]);
 
-    printf("Parent (KernelSim): PID = %d\n", getpid());
+    else{
+        wait(pid1);
+        wait(pid2);
+        wait(pid3);
+        wait(pid4);
+        wait(pid5);
+        wait(pid6);
+        printf("Parent (KernelSim): PID = %d\n", getpid());
+    }
 
     return 0;
 }

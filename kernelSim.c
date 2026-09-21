@@ -2,12 +2,17 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/wait.h>
+#include "constants.h"
 
 int main()
 {
-    pid_t pid1, pid2, pid3, pid4, pid5, pid6;
-    int fd1[2], fd2[2], fd3[2], fd4[2], fd5[2], fd6[2];
+    pid_t pid1, pid2, pid3, pid4, pid5, pid6, pid_irq;
+    int fd1[2], fd2[2], fd3[2], fd4[2], fd5[2], fd6[2], irq_fd[2];
     int buf_A1_A2, buf_A2_A1, buf_A3_A4, buf_A4_A3, buf_A5_A6, buf_A6_A5;
+    char buf_irq[10];
+    int status;
+    IrqMsg msg;
 
     pipe(fd1);
     pipe(fd2);
@@ -15,9 +20,10 @@ int main()
     pipe(fd4);
     pipe(fd5);
     pipe(fd6);
+    pipe(irq_fd);
 
     pid1 = fork();
-    if (pid1 == 0){
+    if(pid1 == 0){
         close(fd1[0]);
         close(fd2[0]);
         close(fd2[1]);
@@ -29,6 +35,8 @@ int main()
         close(fd5[1]);
         close(fd6[0]);
         close(fd6[1]);
+        close(irq_fd[0]);
+        close(irq_fd[1]);
         printf("Child 1: PID = %d, PPID = %d\n", getpid(), getppid());
         execl("./a1", "a1", NULL);
         exit(0);
@@ -36,7 +44,7 @@ int main()
     close(fd1[1]);
 
     pid2 = fork();
-    if (pid2 == 0){
+    if(pid2 == 0){
         close(fd1[0]);
         close(fd2[0]);
         close(fd3[0]);
@@ -47,6 +55,8 @@ int main()
         close(fd5[1]);
         close(fd6[0]);
         close(fd6[1]);
+        close(irq_fd[0]);
+        close(irq_fd[1]);
         printf("Child 2: PID = %d, PPID = %d\n", getpid(), getppid());
         execl("./a2", "a2", NULL);
         exit(0);
@@ -54,7 +64,7 @@ int main()
     close(fd2[1]);
 
     pid3 = fork();
-    if (pid3 == 0){
+    if(pid3 == 0){
         close(fd1[0]);
         close(fd2[0]);
         close(fd3[0]);
@@ -64,6 +74,8 @@ int main()
         close(fd5[1]);
         close(fd6[0]);
         close(fd6[1]);
+        close(irq_fd[0]);
+        close(irq_fd[1]);
         printf("Child 3: PID = %d, PPID = %d\n", getpid(), getppid());
         execl("./a3", "a3", NULL);
         exit(0);
@@ -71,7 +83,7 @@ int main()
     close(fd3[1]);
 
     pid4 = fork();
-    if (pid4 == 0){
+    if(pid4 == 0){
         close(fd1[0]);
         close(fd2[0]);
         close(fd3[0]);
@@ -80,6 +92,8 @@ int main()
         close(fd5[1]);
         close(fd6[0]);
         close(fd6[1]);
+        close(irq_fd[0]);
+        close(irq_fd[1]);
         printf("Child 4: PID = %d, PPID = %d\n", getpid(), getppid());
         execl("./a4", "a4", NULL);
         exit(0);
@@ -87,7 +101,7 @@ int main()
     close(fd4[1]);
 
     pid5 = fork();
-    if (pid5 == 0){
+    if(pid5 == 0){
         close(fd1[0]);
         close(fd2[0]);
         close(fd3[0]);
@@ -95,6 +109,8 @@ int main()
         close(fd5[0]);
         close(fd6[0]);
         close(fd6[1]);
+        close(irq_fd[0]);
+        close(irq_fd[1]);
         printf("Child 5: PID = %d, PPID = %d\n", getpid(), getppid());
         execl("./a5", "a5", NULL);
         exit(0);
@@ -102,27 +118,64 @@ int main()
     close(fd5[1]);
 
     pid6 = fork();
-    if (pid6 == 0){
+    if(pid6 == 0){
         close(fd1[0]);
         close(fd2[0]);
         close(fd3[0]);
         close(fd4[0]);
         close(fd5[0]);
         close(fd6[0]);
+        close(irq_fd[0]);
+        close(irq_fd[1]);
         printf("Child 6: PID = %d, PPID = %d\n", getpid(), getppid());
         execl("./a6", "a6", NULL);
         exit(0);
     }
     close(fd6[1]);
 
-    else{
-        wait(pid1);
-        wait(pid2);
-        wait(pid3);
-        wait(pid4);
-        wait(pid5);
-        wait(pid6);
-        printf("Parent (KernelSim): PID = %d\n", getpid());
+    pid_irq = fork();
+    if(pid_irq == 0){
+        close(fd1[0]);
+        close(fd2[0]);
+        close(fd3[0]);
+        close(fd4[0]);
+        close(fd5[0]);
+        close(fd6[0]);
+        close(irq_fd[0]);
+        printf("Child IRQ: PID = %d, PPID = %d\n", getpid(), getppid());
+
+        sprintf(buf_irq, "%d", irq_fd[1]);
+        execl("./interControllerSim", "interControllerSim", buf_irq, NULL);
+        exit(0);
+    }
+    close(irq_fd[1]);
+
+    printf("Parent (KernelSim): PID = %d\n", getpid());
+
+    while(1){
+        read(irq_fd[0], &msg, sizeof(IrqMsg));
+
+        if(msg.irq0 == 1 && msg.irq1 == 1 && msg.irq2 == 1){
+
+        }
+        else if(msg.irq0 == 1 && msg.irq1 == 1){
+
+        }
+        else if(msg.irq0 == 1 && msg.irq2 == 1){
+
+        }
+        else if(msg.irq1 == 1 && msg.irq2 == 1){
+
+        }
+        else if(msg.irq0 == 1){
+
+        }
+        else if(msg.irq1 == 1){
+
+        }
+        else if(msg.irq2 == 1){
+
+        }
     }
 
     return 0;

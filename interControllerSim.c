@@ -11,8 +11,9 @@ int main(int argc, char *argv[])
     while(1){
         usleep(500000);
 
-        IrqMsg msg;
+        Msg msg;
 
+        msg.tipo = 0;
         msg.irq0 = 1;
         msg.irq1 = 0;
         msg.irq2 = 0;
@@ -25,7 +26,7 @@ int main(int argc, char *argv[])
             msg.irq2 = 1;
         }
 
-        write(irq_fd, &msg, sizeof(IrqMsg));
+        write(irq_fd, &msg, sizeof(Msg));
     }
 
     return 0;

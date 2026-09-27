@@ -6,82 +6,55 @@
 #include <signal.h>
 #include "constants.h"
 
-pid_t pid1, pid2, pid3, pid4, pid5, pid6, pid_irq;
-int pid = 1;
+pid_t pids[6];
+pid_t pid_irq;
+int atual = 1;
 int cont_recv = 0, fila_recv[6];
 int cont_send = 0, fila_send[6];
 int status[6];
 int finalizados = 0;
+
+int resp[6][2];
 
 // parceiro[6] = {1,0,3,2,5,4} -- mapa fixo A1<->A2, A3<->A4, A5<->A6
 // buf_A1_A2 etc viram um array buf[6] indexado por processo
 // pc_pendente[6] -- guarda o PC de cada processo ao pedir send(), usado no IRQ2
 
 void pausar(int pidN){
-    if(pidN == 1){
-        kill(pid1, SIGSTOP);
-    }
-    else if(pidN == 2){ 
-        kill(pid2, SIGSTOP);
-    }
-    else if(pidN == 3){
-        kill(pid3, SIGSTOP);
-    }
-    else if(pidN == 4){
-        kill(pid4, SIGSTOP);
-    }
-    else if(pidN == 5){
-        kill(pid5, SIGSTOP);
-    }
-    else if(pidN == 6){
-        kill(pid6, SIGSTOP);
+    if(pidN >= 1 && pidN <= 6){
+        kill(pids[pidN - 1], SIGSTOP)
     }
 }
 
 void continuar(int pidN){
-    if(pidN == 1){
-        kill(pid1, SIGCONT);
-    }
-    else if(pidN == 2){ 
-        kill(pid2, SIGCONT);
-    }
-    else if(pidN == 3){
-        kill(pid3, SIGCONT);
-    }
-    else if(pidN == 4){
-        kill(pid4, SIGCONT);
-    }
-    else if(pidN == 5){
-        kill(pid5, SIGCONT);
-    }
-    else if(pidN == 6){
-        kill(pid6, SIGCONT);
+    if(pidN >= 1 && pidN <= 6){
+        kill(pids[pidN - 1], SIGCONT)
     }
 }
 
 void enfileirar(int pidN, int fila[], int *cont){
-    fila[*cont] = pidN;
-    (*cont)++;
+    if(*cont < 6){
+        fila[*cont] = pidN;
+        (*cont)++;
+    }
 }
 
 int desenfileirar(int fila[], int *cont){
     int pidN = fila[0];
 
-    fila[0] = fila[1];
-    fila[1] = fila[2];
-    fila[2] = fila[3];
-    fila[3] = fila[4];
-    fila[4] = fila[5];
-    fila[5] = 0;
+    for(int i = 0; i < *cont - 1; i++){
+        fila[i] = fila[i+1];
+    }
+    fila[*cont - 1] = 0;
 
     (*cont)--;
-    return pidN;
+    return pidN
 }
 
 int tratar(int pidN, int stats[]){
     int proximo = ((pidN == 6) ? 1 : pidN + 1);
 
-    if(stats[proximo - 1] == 0 || proximo == pid){
+    if(stats[proximo - 1] == PRONTO || proximo == pid){
         continuar(proximo);
         return proximo;
     }
@@ -95,208 +68,141 @@ int tratar(int pidN, int stats[]){
     return pidN;
 }
 
-int main()
-{
+int escalonar(void){
+    for(int k = 1; k <= 6; k++){
+        int cand = ((atual + k -1) % 6) + 1;
+
+        if(status[cand - 1] == PRONTO){
+            status[cand - 1] = EXECUTANDO;
+            continuar(cand);
+            printf("A%d executando\n", cand);
+
+            return cand;
+        }
+    }
+
+    printf("nenhum processo pronto\n");
+    return 0;
+}
+
+int main(){
     int mensagem[2];
-    int resp1[2], resp2[2], resp3[2], resp4[2], resp5[2], resp6[2];
-    int buf_A1_A2, buf_A2_A1, buf_A3_A4, buf_A4_A3, buf_A5_A6, buf_A6_A5;
     char buf_msg[10];
+    char *progs[6] = {"./a1", "./a2", "./a3", "./a4", "./a5", "./a6"};
+    char *nomes[6] = {"a1", "a2", "a3", "a4", "a5", "a6"};
     Msg msg;
 
     pipe(mensagem);
-    pipe(resp1);
-    pipe(resp2);
-    pipe(resp3);
-    pipe(resp4);
-    pipe(resp5);
-    pipe(resp6);
+    for (int i = 0; i < 6; i++){
+        pipe(resp[i]);
+    }
 
     sprintf(buf_msg, "%d", mensagem[1]);
 
-    pid1 = fork();
-    if(pid1 == 0){
-        close(mensagem[0]);
-        close(resp1[1]);
-        close(resp2[0]);
-        close(resp2[1]);
-        close(resp3[0]);
-        close(resp3[1]);
-        close(resp4[0]);
-        close(resp4[1]);
-        close(resp5[0]);
-        close(resp5[1]);
-        close(resp6[0]);
-        close(resp6[1]);
-        printf("Child 1: PID = %d, PPID = %d\n", getpid(), getppid());
-        execl("./a1", "a1", buf_msg, NULL);
-        exit(0);
-    }
-    close(resp1[0]);
+    for(int i = 0; i < 6; i++){
+        pids[i] = fork();
 
-    pid2 = fork();
-    if(pid2 == 0){
-        close(mensagem[0]);
-        close(resp1[0]);
-        close(resp1[1]);
-        close(resp2[1]);
-        close(resp3[0]);
-        close(resp3[1]);
-        close(resp4[0]);
-        close(resp4[1]);
-        close(resp5[0]);
-        close(resp5[1]);
-        close(resp6[0]);
-        close(resp6[1]);
-        printf("Child 2: PID = %d, PPID = %d\n", getpid(), getppid());
-        execl("./a2", "a2", buf_msg, NULL);
-        exit(0);
-    }
-    close(resp2[0]);
-    pausar(2);
+        if(pids[i] == 0){
+            close(mensagem[0]);
+            for(int j = 0; j < 6; j++){
+                close(resp[j][1]);
+                if(j != i){
+                    close(resp[j][0])
+                }
+            }
 
-    pid3 = fork();
-    if(pid3 == 0){
-        close(mensagem[0]);
-        close(resp1[0]);
-        close(resp1[1]);
-        close(resp2[0]);
-        close(resp2[1]);
-        close(resp3[1]);
-        close(resp4[0]);
-        close(resp4[1]);
-        close(resp5[0]);
-        close(resp5[1]);
-        close(resp6[0]);
-        close(resp6[1]);
-        printf("Child 3: PID = %d, PPID = %d\n", getpid(), getppid());
-        execl("./a3", "a3", buf_msg, NULL);
-        exit(0);
-    }
-    close(resp3[0]);
-    pausar(3);
+            char buf_resp[10];
+            sprintf(buf_resp, "%d", resp[i][0]);
+            execl(progs[i], nomes[i], buf_msg, buf_resp, NULL);
+            perror("execl");
 
-    pid4 = fork();
-    if(pid4 == 0){
-        close(mensagem[0]);
-        close(resp1[0]);
-        close(resp1[1]);
-        close(resp2[0]);
-        close(resp2[1]);
-        close(resp3[0]);
-        close(resp3[1]);
-        close(resp4[1]);
-        close(resp5[0]);
-        close(resp5[1]);
-        close(resp6[0]);
-        close(resp6[1]);
-        printf("Child 4: PID = %d, PPID = %d\n", getpid(), getppid());
-        execl("./a4", "a4", buf_msg, NULL);
-        exit(0);
-    }
-    close(resp4[0]);
-    pausar(4);
+            exit(1);
+        }
 
-    pid5 = fork();
-    if(pid5 == 0){
-        close(mensagem[0]);
-        close(resp1[0]);
-        close(resp1[1]);
-        close(resp2[0]);
-        close(resp2[1]);
-        close(resp3[0]);
-        close(resp3[1]);
-        close(resp4[0]);
-        close(resp4[1]);
-        close(resp5[1]);
-        close(resp6[0]);
-        close(resp6[1]);
-        printf("Child 5: PID = %d, PPID = %d\n", getpid(), getppid());
-        execl("./a5", "a5", buf_msg, NULL);
-        exit(0);
-    }
-    close(resp5[0]);
-    pausar(5);
+        close(resp[i][0]);
 
-    pid6 = fork();
-    if(pid6 == 0){
-        close(mensagem[0]);
-        close(resp1[0]);
-        close(resp1[1]);
-        close(resp2[0]);
-        close(resp2[1]);
-        close(resp3[0]);
-        close(resp3[1]);
-        close(resp4[0]);
-        close(resp4[1]);
-        close(resp5[0]);
-        close(resp5[1]);
-        close(resp6[1]);
-        printf("Child 6: PID = %d, PPID = %d\n", getpid(), getppid());
-        execl("./a6", "a6", buf_msg, NULL);
-        exit(0);
+        if(i == 0){
+            status[i] = EXECUTANDO;
+        }
+        else{
+            status[i] = PRONTO;
+            pausar(i + 1);
+        }
     }
-    close(resp6[0]);
-    pausar(6);
 
     pid_irq = fork();
     if(pid_irq == 0){
         close(mensagem[0]);
-        close(resp1[0]);
-        close(resp1[1]);
-        close(resp2[0]);
-        close(resp2[1]);
-        close(resp3[0]);
-        close(resp3[1]);
-        close(resp4[0]);
-        close(resp4[1]);
-        close(resp5[0]);
-        close(resp5[1]);
-        close(resp6[0]);
-        close(resp6[1]);
+        for(int j = 0; j < 6; j++){
+            close(resp[j][1]);
+        }
         printf("Child IRQ: PID = %d, PPID = %d\n", getpid(), getppid());
         execl("./interControllerSim", "interControllerSim", buf_msg, NULL);
-        exit(0);
+        perror("execl");
+        exit(1);
     }
     close(mensagem[1]);
 
     printf("Parent (KernelSim): PID = %d\n", getpid());
 
     while(1){
-        read(mensagem[0], &msg, sizeof(Msg));
+        ssize_t lidos = read(mensagem[0], &msg, sizeof(Msg));
 
-        if(msg.tipo == 0){
+        if(msg.tipo == IRQ){
             if(msg.irq0 == 1){
-                pausar(pid);
-                pid = tratar(pid, status);
+                if(atual != 0){
+                    pausar(atual);
+                    if(status[atual - 1] == EXECUTANDO){
+                        status[atual - 1] = PRONTO;
+                    }
+                }
+                atual = escalonar();
             }
 
             if(msg.irq1 == 1 && cont_recv > 0){
-                int atual = desenfileirar(fila_recv, &cont_recv);
-                status[atual - 1] = 0;
-                // Tratar o que deve ser feito quando irq1 é verdadeiro, por enquanto só continua o processo
-                continuar(atual);
+                int p = desenfileirar(fila_recv, &cont_recv);
+                status[p - 1] = PRONTO;
+                printf("A%d desbloqueado (recv)\n", p);
+
+                if(atual == 0){
+                    atual = escalonar();
+                }
             }
 
             if(msg.irq2 == 1 && cont_send > 0){
-                int atual = desenfileirar(fila_send, &cont_send);
-                status[atual - 1] = 0;
-                // Tratar o que deve ser feito quando irq2 é verdadeiro, por enquanto só continua o processo
-                continuar(atual);
+                int p = desenfileirar(fila_send, &cont_send);
+                status[p - 1] = PRONTO;
+                printf("A%d desbloqueado (send)\n", p);
+                
+                if(atual == 0){
+                    atual = escalonar();
+                }
             }
         }
 
-        else if(msg.tipo == 1){
-            // Tratar o que deve ser feito quando um processo envia uma mensagem para outro
+        else if(msg.tipo == SYSCALL){
+            // Fase 3: pausar, marcar BLOQUEADO, salvar op/valor,
+            // enfileirar e escalonar outro processo
         }
 
-        else if(msg.tipo == 2){
-            status[msg.origem - 1] = 2;
+        else if(msg.tipo == FIM){
+            status[msg.origem - 1] = TERMINADO;
             finalizados++;
             if(finalizados == 6){
                 printf("Todos os processos finalizaram.\n");
                 break;
             }
+
+            if(msg.origem == atual){
+                atual = escalonar();
+            }
         }
+    }
+
+    kill(pid_irq, SIGKILL);
+    waitpid(pid_irq, NULL, 0);
+    for(int i = 0; i < 6; i++){
+        waitpid(pids[i], NULL, 0);
     }
 
     return 0;

@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
 
         Msg msg;
 
-        msg.tipo = 0;
+        msg.tipo = IRQ;
         msg.irq0 = 1;
         msg.irq1 = 0;
         msg.irq2 = 0;

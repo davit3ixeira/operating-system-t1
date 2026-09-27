@@ -1,7 +1,7 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#define MAX 10000
+#define MAX 20
 
 /* Operações de syscall */
 #define R 0   // recv (leitura)

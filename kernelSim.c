@@ -4,14 +4,22 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <errno.h>
 #include "constants.h"
+
+typedef struct {
+    int estado;
+    int pc, n;
+    int op, valor;
+    int leituras, escritas;
+} Contexto;
 
 pid_t pids[6];
 pid_t pid_irq;
 int atual = 1;
 int cont_recv = 0, fila_recv[6];
 int cont_send = 0, fila_send[6];
-int status[6];
+Contexto ctx[6];
 int finalizados = 0;
 
 int resp[6][2];
@@ -22,13 +30,13 @@ int resp[6][2];
 
 void pausar(int pidN){
     if(pidN >= 1 && pidN <= 6){
-        kill(pids[pidN - 1], SIGSTOP)
+        kill(pids[pidN - 1], SIGSTOP);
     }
 }
 
 void continuar(int pidN){
     if(pidN >= 1 && pidN <= 6){
-        kill(pids[pidN - 1], SIGCONT)
+        kill(pids[pidN - 1], SIGCONT);
     }
 }
 
@@ -48,13 +56,13 @@ int desenfileirar(int fila[], int *cont){
     fila[*cont - 1] = 0;
 
     (*cont)--;
-    return pidN
+    return pidN;
 }
 
 int tratar(int pidN, int stats[]){
     int proximo = ((pidN == 6) ? 1 : pidN + 1);
 
-    if(stats[proximo - 1] == PRONTO || proximo == pid){
+    if(stats[proximo - 1] == PRONTO || proximo == pidN){
         continuar(proximo);
         return proximo;
     }
@@ -72,8 +80,8 @@ int escalonar(void){
     for(int k = 1; k <= 6; k++){
         int cand = ((atual + k -1) % 6) + 1;
 
-        if(status[cand - 1] == PRONTO){
-            status[cand - 1] = EXECUTANDO;
+        if(ctx[cand - 1].estado == PRONTO){
+            ctx[cand - 1].estado = EXECUTANDO;
             continuar(cand);
             printf("A%d executando\n", cand);
 
@@ -107,7 +115,7 @@ int main(){
             for(int j = 0; j < 6; j++){
                 close(resp[j][1]);
                 if(j != i){
-                    close(resp[j][0])
+                    close(resp[j][0]);
                 }
             }
 
@@ -122,10 +130,10 @@ int main(){
         close(resp[i][0]);
 
         if(i == 0){
-            status[i] = EXECUTANDO;
+            ctx[i].estado = EXECUTANDO;
         }
         else{
-            status[i] = PRONTO;
+            ctx[i].estado = PRONTO;
             pausar(i + 1);
         }
     }
@@ -147,13 +155,20 @@ int main(){
 
     while(1){
         ssize_t lidos = read(mensagem[0], &msg, sizeof(Msg));
+        if(lidos < 0){
+            if(errno == EINTR) continue;
+            perror("read");
+            break;
+        }
+
+        if(lidos == 0) break;
 
         if(msg.tipo == IRQ){
             if(msg.irq0 == 1){
                 if(atual != 0){
                     pausar(atual);
-                    if(status[atual - 1] == EXECUTANDO){
-                        status[atual - 1] = PRONTO;
+                    if(ctx[atual - 1].estado == EXECUTANDO){
+                        ctx[atual - 1].estado = PRONTO;
                     }
                 }
                 atual = escalonar();
@@ -161,7 +176,7 @@ int main(){
 
             if(msg.irq1 == 1 && cont_recv > 0){
                 int p = desenfileirar(fila_recv, &cont_recv);
-                status[p - 1] = PRONTO;
+                ctx[p - 1].estado = PRONTO;
                 printf("A%d desbloqueado (recv)\n", p);
 
                 if(atual == 0){
@@ -171,7 +186,7 @@ int main(){
 
             if(msg.irq2 == 1 && cont_send > 0){
                 int p = desenfileirar(fila_send, &cont_send);
-                status[p - 1] = PRONTO;
+                ctx[p - 1].estado = PRONTO;
                 printf("A%d desbloqueado (send)\n", p);
                 
                 if(atual == 0){
@@ -181,12 +196,21 @@ int main(){
         }
 
         else if(msg.tipo == SYSCALL){
-            // Fase 3: pausar, marcar BLOQUEADO, salvar op/valor,
-            // enfileirar e escalonar outro processo
+            int p = msg.origem;
+
+            pausar(p);
+            ctx[p - 1].estado = BLOQUEADO;
+            ctx[p - 1].op = msg.op;
+            ctx[p - 1].valor = msg.valor;
+            ctx[p - 1].pc = msg.valor
+
+            if(msg.op == R){
+                
+            }
         }
 
         else if(msg.tipo == FIM){
-            status[msg.origem - 1] = TERMINADO;
+            ctx[msg.origem - 1].estado = TERMINADO;
             finalizados++;
             if(finalizados == 6){
                 printf("Todos os processos finalizaram.\n");

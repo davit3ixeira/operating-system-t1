@@ -22,11 +22,18 @@ int cont_send = 0, fila_send[6];
 Contexto ctx[6];
 int finalizados = 0;
 
+int buf[6]; 
+int tem_dado[6];
+
 int resp[6][2];
 
 // parceiro[6] = {1,0,3,2,5,4} -- mapa fixo A1<->A2, A3<->A4, A5<->A6
 // buf_A1_A2 etc viram um array buf[6] indexado por processo
 // pc_pendente[6] -- guarda o PC de cada processo ao pedir send(), usado no IRQ2
+
+int parceiro(int p){
+    return (p % 2) ? p + 1 : p - 1;
+}
 
 void pausar(int pidN){
     if(pidN >= 1 && pidN <= 6){
@@ -202,10 +209,20 @@ int main(){
             ctx[p - 1].estado = BLOQUEADO;
             ctx[p - 1].op = msg.op;
             ctx[p - 1].valor = msg.valor;
-            ctx[p - 1].pc = msg.valor
+            ctx[p - 1].pc = msg.valor;
 
             if(msg.op == R){
-                
+                enfileirar(p, fila_recv, &cont_recv);
+                ctx[p - 1].leituras++;
+                printf("A%d bloqueado\n", p);
+            }
+            else{
+                enfileirar(p, fila_recv, &cont_recv);
+                ctx[p-1].leituras++;
+            }
+
+            if(p == atual){
+                atual = escalonar();
             }
         }
 

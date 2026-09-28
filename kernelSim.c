@@ -5,6 +5,8 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include "constants.h"
 
 typedef struct {
@@ -21,15 +23,13 @@ int cont_recv = 0, fila_recv[6];
 int cont_send = 0, fila_send[6];
 Contexto ctx[6];
 int finalizados = 0;
+int shmid;
+int *shm;
 
 int buf[6]; 
 int tem_dado[6];
 
 int resp[6][2];
-
-// parceiro[6] = {1,0,3,2,5,4} -- mapa fixo A1<->A2, A3<->A4, A5<->A6
-// buf_A1_A2 etc viram um array buf[6] indexado por processo
-// pc_pendente[6] -- guarda o PC de cada processo ao pedir send(), usado no IRQ2
 
 int parceiro(int p){
     return (p % 2) ? p + 1 : p - 1;
@@ -38,6 +38,8 @@ int parceiro(int p){
 void pausar(int pidN){
     if(pidN >= 1 && pidN <= 6){
         kill(pids[pidN - 1], SIGSTOP);
+        ctx[pidN - 1].pc = shm[2 * (pidN - 1)];
+        ctx[pidN - 1].n = shm[2 * (pidN - 1) + 1];
     }
 }
 
@@ -100,12 +102,88 @@ int escalonar(void){
     return 0;
 }
 
+void encerrar(void){
+    kill(pid_irq, SIGKILL);
+    for(int i = 0; i < 6; i++){
+        kill(pids[i], SIGKILL);
+    }
+
+    waitpid(pid_irq, NULL, 0);
+    for(int i = 0; i < 6; i++){
+        waitpid(pids[i], NULL, 0);
+    }
+
+    shmdt(shm);
+    shmctl(shmid, IPC_RMID, NULL);
+    printf("KernelSim encerrado, tudo devidamente liberado\n");
+}
+
+void imprimir_tabela(void){
+    const char *nome_estado[] = { "PRONTO", "EXECUTANDO", "BLOQUEADO", "TERMINADO" };
+
+    printf("\n==================== ESTADOS ====================\n");
+    for(int i = 0; i < 6; i++){
+        ctx[i].pc = shm[2 * i];
+        ctx[i].n = shm[2 * i + 1];
+
+        printf("A%d | PC = %d, N = %d | %s",
+            i+1, ctx[i].pc, ctx[i].n, nome_estado[ctx[i].estado]);
+        if(ctx[i].estado == BLOQUEADO){
+            int pipeN = (i + 2) / 2;
+            printf(" (pipe %d, %s)",
+                pipeN, ctx[i].op == R ? "recv" : "send");
+        }
+
+        printf(" | leituras=%d escritas=%d\n",
+            ctx[i].leituras, ctx[i].escritas);
+    }
+    printf("======================================================\n");
+    printf("Digite 'fg' para continuar.\n");
+    fflush(stdout);
+}
+
+void trataCtrlZ(int sinal){
+    kill(pid_irq, SIGSTOP);
+    if(atual != 0)
+        pausar(atual);
+
+    imprimir_tabela();
+
+    raise(SIGSTOP);
+
+    printf("Retomando a simulação...\n");
+    kill(pid_irq, SIGCONT);
+    if(atual != 0)
+        continuar(atual);
+}
+
+void trataSinal(int sinal){
+    switch(sinal){
+        case SIGINT:
+            printf("\nCTRL-C recebido (%d), encerrando\n", sinal);
+            break;
+        case SIGQUIT:
+            printf("\nCTRL-\\ recebido (%d), encerrando\n", sinal);
+            break;
+        case SIGTERM:
+            printf("\nSIGTERM recebido (%d), encerrando\n", sinal);
+            break;
+    }
+    encerrar();
+    exit(0);
+}
+
 int main(){
     int mensagem[2];
     char buf_msg[10];
+    char buf_shm[16];
     char *progs[6] = {"./a1", "./a2", "./a3", "./a4", "./a5", "./a6"};
     char *nomes[6] = {"a1", "a2", "a3", "a4", "a5", "a6"};
     Msg msg;
+
+    shmid = shmget(IPC_PRIVATE, 12 * sizeof(int), IPC_CREAT | 0600);
+    shm = shmat(shmid, NULL, 0);
+    sprintf(buf_shm, "%d", shmid);
 
     pipe(mensagem);
     for (int i = 0; i < 6; i++){
@@ -126,9 +204,11 @@ int main(){
                 }
             }
 
+            setpgid(0, 0);
+
             char buf_resp[10];
             sprintf(buf_resp, "%d", resp[i][0]);
-            execl(progs[i], nomes[i], buf_msg, buf_resp, NULL);
+            execl(progs[i], nomes[i], buf_msg, buf_resp, buf_shm, NULL);
             perror("execl");
 
             exit(1);
@@ -151,12 +231,23 @@ int main(){
         for(int j = 0; j < 6; j++){
             close(resp[j][1]);
         }
+
+        setpgid(0, 0);
+
         printf("Child IRQ: PID = %d, PPID = %d\n", getpid(), getppid());
         execl("./interControllerSim", "interControllerSim", buf_msg, NULL);
         perror("execl");
         exit(1);
     }
     close(mensagem[1]);
+
+    if(signal(SIGINT, trataSinal) == SIG_ERR){
+        perror("signal");
+        exit(1);
+    }
+    signal(SIGQUIT, trataSinal);
+    signal(SIGTERM, trataSinal);
+    signal(SIGTSTP, trataCtrlZ);
 
     printf("Parent (KernelSim): PID = %d\n", getpid());
 
@@ -173,6 +264,7 @@ int main(){
         if(msg.tipo == IRQ){
             if(msg.irq0 == 1){
                 if(atual != 0){
+                    printf("A%d irq0\n", atual);
                     pausar(atual);
                     if(ctx[atual - 1].estado == EXECUTANDO){
                         ctx[atual - 1].estado = PRONTO;
@@ -183,6 +275,17 @@ int main(){
 
             if(msg.irq1 == 1 && cont_recv > 0){
                 int p = desenfileirar(fila_recv, &cont_recv);
+
+                int q = parceiro(p);
+                int valor = 0;
+
+                if(tem_dado[q - 1]){
+                    valor = buf[q - 1];
+                    tem_dado[q - 1] = 0;
+                }
+                ctx[p - 1].n = valor;
+                write(resp[p - 1][1], &valor, sizeof(int));
+
                 ctx[p - 1].estado = PRONTO;
                 printf("A%d desbloqueado (recv)\n", p);
 
@@ -193,6 +296,12 @@ int main(){
 
             if(msg.irq2 == 1 && cont_send > 0){
                 int p = desenfileirar(fila_send, &cont_send);
+
+                buf[p - 1] = ctx[p-1].valor;
+                tem_dado[p-1] = 1;
+                int ok = 0;
+                write(resp[p-1][1], &ok, sizeof(int));
+
                 ctx[p - 1].estado = PRONTO;
                 printf("A%d desbloqueado (send)\n", p);
                 
@@ -214,11 +323,12 @@ int main(){
             if(msg.op == R){
                 enfileirar(p, fila_recv, &cont_recv);
                 ctx[p - 1].leituras++;
-                printf("A%d bloqueado\n", p);
+                printf("A%d bloqueado em recv\n", p);
             }
             else{
-                enfileirar(p, fila_recv, &cont_recv);
-                ctx[p-1].leituras++;
+                enfileirar(p, fila_send, &cont_send);
+                ctx[p-1].escritas++;
+                printf("A%d bloqueado em send\n", p);
             }
 
             if(p == atual){
@@ -240,11 +350,6 @@ int main(){
         }
     }
 
-    kill(pid_irq, SIGKILL);
-    waitpid(pid_irq, NULL, 0);
-    for(int i = 0; i < 6; i++){
-        waitpid(pids[i], NULL, 0);
-    }
-
+    encerrar();
     return 0;
 }

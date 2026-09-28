@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include "constants.h"
 
 #define ID 3
@@ -24,18 +26,20 @@ void syscall_sim(int fd_msg, int fd_resp, int op, int *data, int PC){
 
 int main(int argc, char *argv[]){
     int fd_mensagem = atoi(argv[1]);
-    int fd_resp     = atoi(argv[2]);
+    int fd_resp = atoi(argv[2]);
+    int *shm = shmat(atoi(argv[3]), NULL, 0);
 
-    int PC = 1, N = 0, d, op;
+    int PC = 0, N = 0, d, op;
     int *data;
 
     srand(getpid());
 
     while(PC < MAX){
         PC++;
+        shm[2 * (ID - 1)] = PC;
         printf("A%d PC=%d\n", ID, PC);
         sleep(0.5);
-        if (d = rand()%100 + 1 < 15){
+        if ((d = rand()%100 + 1) < 15){
             if(d % 2){
                 op = R;
                 data = &N;
@@ -45,10 +49,15 @@ int main(int argc, char *argv[]){
                 data = &PC;
             }
             syscall_sim(fd_mensagem, fd_resp, op, data, PC);
-            if(op == R) printf("A%d recebeu N=%d\n", ID, N);
+            if(op == R){
+                shm[2 * (ID - 1) + 1] = N;
+                printf("A%d recebeu N=%d\n", ID, N);
+            }
         }
         sleep(0.5);
     }
+
+    shmdt(shm);
 
     Msg fim;
     fim.tipo = FIM;

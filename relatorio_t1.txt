@@ -1,0 +1,166 @@
+Relatorio - T1 INF 1316
+
+Davi Teixeira 2510420
+Charbel Janos 2510373
+
+1. PROGRAMAS ENTREGUES
+
+kernelSim.c - nucleo da simulacao: cria os demais processos, escalona-os via SIGSTOP e
+SIGCONT, trata interrupcoes e syscalls, mantem o estado de cada processo e a
+visualizacao via Ctrl+Z.
+
+interControllerSim.c - gera, a cada 500 ms, as interrupcoes IRQ0 (sempre), IRQ1 (10% de
+chance) e IRQ2 (5% de chance), e as envia ao KernelSim.
+
+a1.c ate a6.c - os 6 processos de aplicacao. Cada um roda um loop de ate MAX iteracoes
+incrementando seu contador PC, e ocasionalmente solicita uma syscall simulada de leitura
+(recv) ou escrita (send) para se comunicar com seu parceiro.
+
+constants.h - cabecalho compartilhado por todos os programas: constantes (MAX, operacoes
+R e W, tipos de mensagem, estados de processo) e a definicao da struct Msg, usada como
+protocolo de comunicacao entre todos os processos.
+
+Makefile - compila todos os 8 executaveis (kernelSim, interControllerSim, a1 a a6) e
+oferece os alvos make all, make run e make clean.
+
+2. ARQUITETURA GERAL
+
+O KernelSim e o processo "pai" de todos os demais: ele cria, via fork() e execl(), os 6
+processos de aplicacao e o InterControllerSim. Nenhum processo de aplicacao se comunica
+diretamente com seu parceiro - toda comunicacao passa pelo Kernel, que e quem de fato
+mantem os "pipes bidirecionais" entre os pares, na forma de 6 buffers internos (ver
+secao 6).
+
+Existe um pipe unico de entrada, chamado mensagem, no qual escrevem os 6 processos de
+aplicacao e o InterControllerSim, e do qual so o Kernel le. Essa escolha evita a
+necessidade de monitorar varios descritores ao mesmo tempo (o que exigiria select() ou
+poll(), fora do escopo da disciplina): como cada mensagem escrita e pequena, o sistema
+garante que escritas de processos diferentes nunca se misturam no meio, entao o Kernel
+sempre le uma mensagem completa de cada vez, nao importa quem a escreveu.
+
+Existem tambem seis pipes de resposta, um por processo de aplicacao, usados pelo Kernel
+para devolver o resultado de uma syscall de leitura (recv). Esses pipes sao individuais,
+e nao um unico pipe compartilhado, porque existem varios leitores em potencial - um pipe
+unico correria o risco de a resposta destinada a um processo ser lida por outro.
+
+Por fim, existe uma area de memoria compartilhada (shmget/shmat, com 12 inteiros, dois
+por processo), usada para que o Kernel consiga observar o valor atual de PC e N de um
+processo em execucao, sem depender de o processo se comunicar ativamente. Isso e usado
+principalmente na captura de contexto (secao 7) e na visualizacao via Ctrl+Z.
+
+Toda comunicacao entre os processos de aplicacao (ou o InterControllerSim) e o Kernel
+usa uma unica estrutura de mensagem, chamada Msg, com os campos: tipo (indicando se a
+mensagem e uma interrupcao, uma syscall ou um aviso de termino), os tres sinalizadores
+de interrupcao (irq0, irq1, irq2), a origem (qual processo, de 1 a 6, enviou), a
+operacao (leitura ou escrita) e o valor (o PC do processo, no caso de uma escrita). O
+campo tipo permite que o Kernel, ao ler uma mensagem do pipe unico, saiba como
+interpretar o restante dos campos.
+
+
+3. ESCALONAMENTO ROUND-ROBIN
+
+O Kernel mantem uma variavel chamada atual, indicando qual processo esta em execucao no
+momento. A cada IRQ0 (a cada 500 ms), a funcao escalonar():
+
+- pausa o processo atualmente em execucao, se ele ainda estiver executando (ou seja, se
+nao tiver se bloqueado por conta propria antes do fim da fatia de tempo);
+- percorre os processos a partir do proximo na sequencia, de forma circular, procurando
+o primeiro que esteja no estado pronto;
+- marca esse processo como em execucao e envia SIGCONT a ele;
+- se nenhum processo estiver pronto (todos bloqueados ou terminados), o sistema aguarda
+o proximo evento, que sera uma interrupcao capaz de desbloquear alguem.
+
+A funcao escalonar tambem e chamada fora do contexto do IRQ0: sempre que o processo em
+execucao se bloqueia por conta de uma syscall, ou quando uma interrupcao IRQ1 ou IRQ2
+libera alguem e nao ha ninguem em execucao no momento.
+
+
+4. COMUNICACAO ENTRE PARES
+
+Os "pipes bidirecionais" entre A1-A2, A3-A4 e A5-A6 mencionados no enunciado nao sao
+pipes Unix reais entre os dois processos - sao simulados inteiramente dentro do Kernel,
+como pede a especificacao. Cada processo tem uma posicao propria em dois vetores
+internos do Kernel: um guarda o ultimo valor de PC que aquele processo enviou via send,
+e o outro indica se esse valor ja foi de fato escrito, ou se o parceiro nunca escreveu
+nada.
+
+Existe uma funcao que calcula o parceiro de cada processo pela paridade do seu numero
+(numero impar aponta para o proximo, numero par aponta para o anterior), refletindo os
+pares fixos definidos no enunciado.
+
+Quando um processo executa recv e e desbloqueado pelo IRQ1, o Kernel consulta se o
+parceiro ja escreveu algum valor: se nunca houve escrita, o valor devolvido e zero,
+exatamente como especificado no enunciado.
+
+
+5. FILAS DE BLOQUEADOS
+
+Existem duas filas, uma para processos esperando recv e outra para processos esperando
+send, implementadas como filas circulares simples, em ordem de chegada (FIFO).
+
+Quando um processo faz uma syscall, o Kernel envia SIGSTOP imediatamente a ele, marca
+seu estado como bloqueado, registra a operacao e o valor pendentes, e insere o processo
+na fila correspondente.
+
+Quando chega uma interrupcao IRQ1 (leitura concluida) ou IRQ2 (escrita concluida), o
+Kernel retira o primeiro processo da fila correspondente e o desbloqueia. Se a fila
+estiver vazia no momento em que a interrupcao chega, ela e simplesmente descartada -
+nenhum processo e afetado, conforme especificado no enunciado.
+
+
+6. CONTEXTO DE EXECUCAO
+
+Para cada processo, o Kernel mantem uma estrutura de contexto com o estado atual, o PC e
+o N, a operacao e o valor pendentes (quando bloqueado), e contadores de leituras e
+escritas.
+
+O PC e o N sao capturados a partir da memoria compartilhada sempre que o processo e
+pausado, seja por fim da fatia de tempo ou por syscall, permitindo ao Kernel saber, a
+qualquer momento, o progresso de cada processo sem depender de comunicacao ativa. Os
+contadores de leituras e escritas registram quantas vezes aquele processo acessou seu
+dispositivo (pipe simulado) desde o inicio, e sao usados na visualizacao por Ctrl+Z.
+
+
+7. SINAIS UTILIZADOS
+
+SIGSTOP e SIGCONT pausam e retomam os processos de aplicacao e o InterControllerSim,
+implementando o escalonamento.
+
+SIGTSTP (Ctrl+Z) interrompe a simulacao inteira e exibe a tabela de estado de todos os
+processos, conforme descrito na secao 9.
+
+SIGINT, SIGQUIT e SIGTERM encerram a simulacao de forma limpa, matando todos os
+processos filhos e liberando a memoria compartilhada.
+
+Cada processo filho chama setpgid logo apos ser criado, colocando-se em seu proprio
+grupo de processos. Isso evita que sinais enviados pelo terminal ao grupo de processos
+do KernelSim, como o proprio Ctrl+Z, afetem diretamente os processos de aplicacao - quem
+decide pausa-los ou retoma-los e sempre o Kernel, nunca o terminal.
+
+
+8. VISUALIZACAO DE ESTADO (CTRL+Z)
+
+Ao receber o sinal de Ctrl+Z, o KernelSim pausa o InterControllerSim e o processo
+atualmente em execucao, e imprime, para cada processo de A1 a A6: o valor de PC e de N;
+o estado (pronto, executando, bloqueado ou terminado); se bloqueado, o pipe (par) e a
+operacao pendente (recv ou send); e os contadores de leituras e escritas desde o inicio.
+
+Em seguida, o proprio KernelSim se suspende, deixando toda a simulacao efetivamente
+parada no shell. Ao ser retomado com o comando fg, o Kernel reativa o InterControllerSim
+e o processo que estava em execucao, continuando exatamente de onde parou.
+
+
+9. ENCERRAMENTO
+
+Cada processo de aplicacao, ao completar suas MAX iteracoes, envia uma mensagem de
+termino ao Kernel antes de terminar. O Kernel conta quantos processos ja terminaram; ao
+atingir 6, encerra o laco principal, finaliza o InterControllerSim, aguarda todos os
+processos filhos e libera a memoria compartilhada. O mesmo procedimento de limpeza e
+acionado se o KernelSim receber um sinal de interrupcao ou termino vindo de fora.
+
+O comando "make all" compila o kernelSim, o interControllerSim e os seis processos de
+aplicacao. O comando "make run" compila, se necessario, e executa o kernelSim. O comando
+"make clean" remove os binarios gerados.
+
+Durante a execucao, Ctrl+Z pausa a simulacao e mostra o estado de todos os processos; o
+comando fg retoma a execucao de onde parou. Ctrl+C encerra a simulacao de forma limpa.

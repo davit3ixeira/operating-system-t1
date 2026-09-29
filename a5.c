@@ -38,7 +38,7 @@ int main(int argc, char *argv[]){
         PC++;
         shm[2 * (ID - 1)] = PC;
         printf("A%d PC=%d\n", ID, PC);
-        sleep(0.5);
+        usleep(500000);
         if ((d = rand()%100 + 1) < 15){
             if(d % 2){
                 op = R;
@@ -54,7 +54,7 @@ int main(int argc, char *argv[]){
                 printf("A%d recebeu N=%d\n", ID, N);
             }
         }
-        sleep(0.5);
+        usleep(500000);
     }
 
     shmdt(shm);
